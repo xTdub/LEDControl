@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using NAudio;
@@ -12,7 +13,27 @@ namespace LEDControl
     {
         public AudioColors()
         {
+            try
+            {
+                _deviceName = Properties.Settings.Default["LastAudioDevice"] as string;
+            }
+            catch
+            {
+                _deviceName = "";
+            }
             setup();
+        }
+        ~AudioColors()
+        {
+            Properties.Settings.Default["LastAudioDevice"] = _deviceName;
+            Properties.Settings.Default.Save();
+        }
+        private static string _deviceName;
+        private static bool _deviceNameChanged = false;
+        public static string DeviceName
+        {
+            get { return _deviceName; }
+            set { _deviceName = value; _deviceNameChanged = true; }
         }
         public int fftCount = 4;
         private SampleAggregator[] sampleAggregatorL;
@@ -39,13 +60,28 @@ namespace LEDControl
 
             //wo = new WaveOut();
             wi = new WaveIn();
-
+            var caps = new List<WaveInCapabilities>();
+            int sm_devnum = 0;
             for (int i = 0; i < WaveIn.DeviceCount; i++ )
             {
                 var cap = WaveIn.GetCapabilities(i);
+                caps.Add(cap);
                 if (cap.ProductName.Contains("Stereo Mix"))
+                {
                     wi.DeviceNumber = i;
+                    sm_devnum = i;
+                }
+                if(cap.ProductName == DeviceName)
+                {
+                    wi.DeviceNumber = i;
+                    sm_devnum = -1;
+                    break;
+                }
             }
+            if (sm_devnum != -1) wi.DeviceNumber = sm_devnum;
+            _deviceName = caps[wi.DeviceNumber].ProductName;
+            _deviceNameChanged = false;
+            
             /*
             for (int i = 0; i < WaveOut.DeviceCount; i++)
             {
@@ -67,9 +103,14 @@ namespace LEDControl
             wi.StartRecording();
             //wo.Play();
         }
-        public void draw()
+        public void stop()
         {
-
+            wi.StopRecording();
+            for(int i=0; i<fftCount; i++)
+            {
+                sampleAggregatorL[i] = null;
+                sampleAggregatorR[i] = null;
+            }
         }
 
         public WaveIn wi;
@@ -90,17 +131,25 @@ namespace LEDControl
 
         void wi_DataAvailable(object sender, WaveInEventArgs e)
         {
+            if (LEDSetup.OVERRIDE) return;
+            if (_deviceNameChanged)
+            {
+                stop();
+                setup();
+                return;
+            }
+            float masterVol = VolumeUtilities.GetMasterVolume();
             //bwp.AddSamples(e.Buffer, 0, e.BytesRecorded);
             //int size = hob(e.BytesRecorded) >> 1;
             //float[] buffer = new float[size];
             for (int i = 0; i < e.BytesRecorded; i+=4)
             {
                 //buffer[i] = (float)BitConverter.ToInt16(e.Buffer, i << 1);
-                float left = (float)BitConverter.ToInt16(e.Buffer, i);
+                float left = (float)BitConverter.ToInt16(e.Buffer, i) / masterVol;
                 //sampleAggregatorL0.Add(left);
                 //sampleAggregatorL1.Add(left);
 
-                float right = (float)BitConverter.ToInt16(e.Buffer, i+2);
+                float right = (float)BitConverter.ToInt16(e.Buffer, i+2) / masterVol;
                 //sampleAggregatorR0.Add(right);
                 //sampleAggregatorR1.Add(right);
                 for (int j = 0; j < fftCount; j++)
@@ -147,7 +196,7 @@ namespace LEDControl
             maxVals[maxVali++] = output.Max();
             if (maxVali >= maxVals.Length) maxVali = 0;
             float scale = maxVals.Average();
-            if (scale < 200) scale = 200;
+            if (scale < 50) scale = 50;
 #if DEBUG
             //Console.WriteLine("{3}: FFT value max of {0} at index {1} ({2} Hz), scale {4}", val, val_i, val_i * wi.WaveFormat.SampleRate / fftLength, DateTime.Now.Millisecond, scale);
 #endif
@@ -369,6 +418,57 @@ namespace LEDControl
                 LEDSetup.sendSerialData(serialData);
                 fftSent = 0;
             }
+        }
+    }
+
+    public static class VolumeUtilities
+    {
+        public static float GetMasterVolume()
+        {
+            // get the speakers (1st render + multimedia) device
+            IMMDeviceEnumerator deviceEnumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
+            IMMDevice speakers;
+            const int eRender = 0;
+            const int eMultimedia = 1;
+            deviceEnumerator.GetDefaultAudioEndpoint(eRender, eMultimedia, out speakers);
+
+            object o;
+            speakers.Activate(typeof(IAudioEndpointVolume).GUID, 0, IntPtr.Zero, out o);
+            IAudioEndpointVolume aepv = (IAudioEndpointVolume)o;
+            float volume = aepv.GetMasterVolumeLevelScalar();
+            Marshal.ReleaseComObject(aepv);
+            Marshal.ReleaseComObject(speakers);
+            Marshal.ReleaseComObject(deviceEnumerator);
+            return volume;
+        }
+
+        [ComImport]
+        [Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+        private class MMDeviceEnumerator
+        {
+        }
+
+        [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IAudioEndpointVolume
+        {
+            void _VtblGap1_6();
+            float GetMasterVolumeLevelScalar();
+        }
+
+        [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IMMDeviceEnumerator
+        {
+            void _VtblGap1_1();
+
+            [PreserveSig]
+            int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppDevice);
+        }
+
+        [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IMMDevice
+        {
+            [PreserveSig]
+            int Activate([MarshalAs(UnmanagedType.LPStruct)] Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
         }
     }
 }

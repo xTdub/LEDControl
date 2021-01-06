@@ -1,4 +1,5 @@
-﻿using System;
+﻿using NAudio.Wave;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -29,13 +30,24 @@ namespace LEDControl
         }
 
         private double scaleFactor = 1.0;
+        private List<string> audioDeviceNames;
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            Properties.Settings.Default.Reload();
+
             var screen = System.Windows.Forms.Screen.AllScreens[0];
             scaleFactor = 200.0 / (double)screen.Bounds.Height;
             borderScreen.Width = screen.Bounds.Width * scaleFactor;
             //drawLEDs();
+            //Glass10.EnableBlur(this);
+
+            audioDeviceNames = new List<string>();
+            for(int i=0; i< WaveIn.DeviceCount; i++)
+            {
+                audioDeviceNames.Add(WaveIn.GetCapabilities(i).ProductName);
+            }
+            comboBoxAudioDevices.ItemsSource = audioDeviceNames;
         }
 
         private void removeLEDs()
@@ -145,6 +157,33 @@ namespace LEDControl
             LEDSetup.resetLEDs();
             removeLEDs();
             drawLEDs();
+        }
+
+        private void canvasColor_SelectedColorChanged(object sender, RoutedPropertyChangedEventArgs<Color?> e)
+        {
+            if (!canvasColor.SelectedColor.HasValue) return;
+            Color col = canvasColor.SelectedColor.Value;
+            byte[] packet = LEDSetup.getMagicHeader();
+            for (int i = 0; i < LEDSetup.LED_C; i++)
+            {
+                LEDSetup.processColorSimple(i, packet, col.R, col.G, col.B);
+            }
+            LEDSetup.sendSerialData(packet);
+        }
+
+        private void canvasColor_MouseEnter(object sender, MouseEventArgs e)
+        {
+            LEDSetup.OVERRIDE = true;
+        }
+
+        private void canvasColor_MouseLeave(object sender, MouseEventArgs e)
+        {
+            LEDSetup.OVERRIDE = false;
+        }
+
+        private void comboBoxAudioDevices_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            AudioColors.DeviceName = comboBoxAudioDevices.SelectedItem as string;
         }
     }
 }

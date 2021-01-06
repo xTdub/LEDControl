@@ -14,14 +14,17 @@ namespace LEDControl
         public const int GRID_W = 9;
         public const int GRID_H = 6;
         public const int LED_C = 25;
-        public const int SCREEN_W = 1920;
-        public const int SCREEN_H = 1080;
 
-        public static short minBrightness = 120;
+        public static int SCREEN_W = 1920;
+        public static int SCREEN_H = 1080;
+        public static int SCREEN_ID = 0;
+
+        public static short minBrightness = 0;//120;
         public static short fade = 64;
         public static int pixelSize = 120;
 
         public static bool LEDS_ON = true;
+        public static bool OVERRIDE = false;
 
         public static SerialPort ActivePort;
         public static byte[,] gamma = new byte[256, 3];
@@ -100,6 +103,9 @@ namespace LEDControl
 
         public static SerialPort Setup()
         {
+            var bounds = System.Windows.Forms.Screen.AllScreens[SCREEN_ID].Bounds;
+            SCREEN_W = bounds.Width;
+            SCREEN_H = bounds.Height;
             //Initialize prevcolor array for fade
             for (int i = 0; i < LED_C; i++)
             {
@@ -236,9 +242,25 @@ namespace LEDControl
             serialData[j+2] = gamma[ledColor[led, 2], 2];
         }
 
+        public static void processColorSimple(int led, byte[] serialData, int r, int g, int b)
+        {
+            // Apply gamma curve and place in serial output buffer
+            int j = (led * 3) + 6;
+            serialData[j] = gamma[r, 0];
+            serialData[j + 1] = gamma[g, 1];
+            serialData[j + 2] = gamma[b, 2];
+        }
+
         public static void sendSerialData(byte[] serialData)
         {
-            if (ActivePort != null) ActivePort.Write(serialData, 0, serialData.Length);
+            try
+            {
+                if (ActivePort != null) ActivePort.Write(serialData, 0, serialData.Length);
+            }
+            catch (Exception e)
+            {
+                Logger.QueueException("Serial Error", e);
+            }
             Array.Copy(ledColor, 0, prevColor, 0, ledColor.Length);
             frameCount++;
         }
@@ -254,7 +276,14 @@ namespace LEDControl
                 serialData[j++] = 0;
                 serialData[j++] = 0;
             }
-            if (ActivePort != null) ActivePort.Write(serialData, 0, serialData.Length);
+            try
+            {
+                if (ActivePort != null) ActivePort.Write(serialData, 0, serialData.Length);
+            }
+            catch (Exception e)
+            {
+                Logger.QueueException("Serial Error", e);
+            }
         }
     }
     public class LEDInfo
@@ -291,7 +320,7 @@ namespace LEDControl
             }
             Coords.Location = new System.Windows.Point(left, top);
         }*/
-        public LEDInfo(int x, int y, int screen = 1)
+        public LEDInfo(int x, int y, int screen = 0)
         {
             X = x;
             Y = y;

@@ -37,6 +37,9 @@ namespace LEDControl
             TrayIcon.ToolTipText = "LED Backlight Control";
             TrayIcon.ContextMenu = new ContextMenu();
             TrayIcon.ContextMenu.ItemsSource = new List<MenuItem>() { new MenuItem() { Header = "E_xit", Command = Exit, CommandTarget=TrayIcon } };
+            SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
+            SetBackgroundColor();
+
             Logger.Cleanup(10);
             Logger.QueueLine("Completed initial startup");
 
@@ -46,6 +49,30 @@ namespace LEDControl
             Heartbeat = new System.Timers.Timer(1000);
             Heartbeat.Elapsed += Heartbeat_Elapsed;
             Heartbeat.Start();
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            Glass10.EnableBlur(this);
+        }
+
+        private void SetBackgroundColor()
+        {
+            brdrPopup.BorderBrush = SystemParameters.WindowGlassBrush;
+            System.Windows.Media.Color glassCol = SystemParameters.WindowGlassColor;
+            glassCol.R += 40;
+            glassCol.G += 40;
+            glassCol.B += 40;
+            glassCol.A = 0xE0;
+            brdrPopup.Background = new System.Windows.Media.SolidColorBrush(glassCol);
+        }
+
+        private void SystemParameters_StaticPropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == "WindowGlassBrush")
+            {
+                this.SetBackgroundColor();
+            }
         }
         DateTime lastBeat = DateTime.Now;
         void Heartbeat_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
@@ -174,76 +201,32 @@ namespace LEDControl
             }
         }
 
-        void DrawTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
+        int dThreadCount = 0;
+        async void DrawTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
             //Dispatcher.BeginInvoke(new Action(drawRainbow));
             if (DrawTimer.Enabled)
             {
                 if (sColors.device == null) sColors.setupDX();
-                else Task.Run(new Action(sColors.draw));
+                else
+                {
+                    if (dThreadCount > 0) return;
+                    dThreadCount++;
+                    await Task.Run(new Action(sColors.draw));
+                    dThreadCount--;
+                }
             }
             //drawSolid();
             //draw();
         }
-        /*
-        private void drawRainbow()
-        {
-            byte[] serialData = getMagicHeader();
-            int j = 6;
-            //Color[] colors = new Color[7] { Color.Red, Color.Orange, Color.Yellow, Color.Green, Color.Blue, Color.Indigo, Color.Violet };
-            System.Drawing.Color[] colors = new System.Drawing.Color[7];
-            for (int i = 0; i < LED_C; i++)
-            {
-                ledColor[i, 0] = (byte)colors[i % 7].R;
-                ledColor[i, 1] = (byte)colors[i % 7].G;
-                ledColor[i, 2] = (byte)colors[i % 7].B;
-
-                if (DateTime.Now.Second % 2 == 0)
-                {
-                    serialData[j++] = gamma[ledColor[i, 0], 0];
-                    serialData[j++] = gamma[ledColor[i, 1], 1];
-                    serialData[j++] = gamma[ledColor[i, 2], 2];
-                }
-                else
-                {
-                    serialData[j++] = ledColor[i, 0];
-                    serialData[j++] = ledColor[i, 1];
-                    serialData[j++] = ledColor[i, 2];
-                }
-            }
-            if (ActivePort != null) ActivePort.Write(serialData, 0, serialData.Length);
-
-            //ledColor.CopyTo(prevColor, 0);
-            Array.Copy(ledColor, 0, prevColor, 0, ledColor.Length);
-        }
-
-        private void drawSolid()
-        {
-            byte[] serialData = LEDSetup.getMagicHeader();
-            int j = 6;
-            for (int i = 0; i < LED_C; i++)
-            {
-                ledColor[i, 0] = (byte)(255 * sliderBrightness.Value);
-                ledColor[i, 1] = (byte)(255 * sliderBrightness.Value);
-                ledColor[i, 2] = (byte)(255 * sliderBrightness.Value);
-                // Apply gamma curve and place in serial output buffer
-                serialData[j++] = gamma[ledColor[i, 0], 0];
-                serialData[j++] = gamma[ledColor[i, 1], 1];
-                serialData[j++] = gamma[ledColor[i, 2], 2];
-            }
-            if (ActivePort != null) ActivePort.Write(serialData, 0, serialData.Length);
-
-            //ledColor.CopyTo(prevColor, 0);
-            Array.Copy(ledColor, 0, prevColor, 0, ledColor.Length);
-        }
-        */
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
-            DrawTimer.Stop();
+            DrawTimer?.Stop();
             System.Threading.Thread.Sleep(50);
             if(LEDSetup.ActivePort != null)
                 if (LEDSetup.ActivePort.IsOpen) LEDSetup.drawOff();
             TrayIcon.Dispose();
+            sColors.stopFluxListener();
             Logger.QueueLine("Application closing");
             base.OnClosing(e);
         }
@@ -282,6 +265,5 @@ namespace LEDControl
                 buttonSwitch.Content = "_Switch to Audio";
             }
         }
-
     }
 }

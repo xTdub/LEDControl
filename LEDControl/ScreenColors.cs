@@ -7,16 +7,87 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Web;
 
 namespace LEDControl
 {
     class ScreenColors
     {
+        private Thread fluxListenerThread;
+        private bool fluxListenerTerminate = false;
+        private int colorTemp = 6500;
         public ScreenColors()
         {
             setupDX();
+
+            startFluxListener();
         }
+
+        public void startFluxListener()
+        {
+            Logger.QueueLine("Starting f.lux listener on port 8811");
+            fluxListenerThread = new Thread(fluxListener)
+            {
+                IsBackground = true
+            };
+            fluxListenerThread.Start();
+            fluxListenerThread.Name = "Flux Listener";
+        }
+
+        public void stopFluxListener()
+        {
+            fluxListenerThread?.Abort();
+            fluxListenerTerminate = true;
+        }
+
+        private void fluxListener()
+        {
+            using (var httpListener = new System.Net.HttpListener())
+            {
+                httpListener.Prefixes.Add("http://localhost:8811/");
+                httpListener.Prefixes.Add("http://127.0.0.1:8811/");
+                try
+                {
+                    httpListener.Start();
+                }
+                catch (Exception ex)
+                {
+                    Logger.QueueException("Flux Error", ex);
+                    return;
+                }
+                while (!fluxListenerTerminate && Thread.CurrentThread.ThreadState == ThreadState.Background)
+                {
+                    //var ctx = httpListener.GetContext();
+                    var tsk = httpListener.GetContextAsync();
+                    if (!tsk.Wait(500)) continue;
+                    var ctx = tsk.Result;
+                    if (ctx.Request.HttpMethod == "POST")
+                    {
+                        var ct = ctx.Request.QueryString.Get("ct");
+                        if (!string.IsNullOrWhiteSpace(ct))
+                        {
+                            ctx.Response.StatusCode = 200;
+                            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                                () => setColorTemp(colorTemp = int.Parse(ct)));
+                            Logger.QueueLine("Color Temp Updated: {0}K", colorTemp);
+                        }
+                        else
+                        {
+                            ctx.Response.StatusCode = 404;
+                        }
+                        using (var strean = ctx.Response.OutputStream)
+                        {
+                        }
+                    }
+                }
+                Logger.QueueLine("Stopping f.lux listener");
+                Task.WaitAll(Logger.FlushQueueAsync());
+                httpListener.Stop();
+            }
+        }
+        
         public static Bitmap getScreenGDI(int screen = 1)
         {
             //http://stackoverflow.com/questions/362986/capture-the-screen-into-a-bitmap
@@ -119,7 +190,10 @@ namespace LEDControl
             if(duplicatedOutput != null) duplicatedOutput.Dispose();
             if(screenTexture != null) screenTexture.Dispose();
             if(device != null) device.Dispose();
+            fluxListenerThread.Abort();
         }
+
+        private int invalid_calls = 0;
 
         public Bitmap getScreenDX()
         {
@@ -169,11 +243,12 @@ namespace LEDControl
                 screenResource.Dispose();
                 duplicatedOutput.ReleaseFrame();
 
+                invalid_calls = 0;
                 return bitmap;
             }
             catch (SharpDXException e)
             {
-                if (e.ResultCode.Code != SharpDX.DXGI.ResultCode.WaitTimeout.Result.Code && e.ResultCode != SharpDX.DXGI.ResultCode.InvalidCall.Result.Code)
+                if (e.ResultCode.Code != SharpDX.DXGI.ResultCode.WaitTimeout.Result.Code)// && e.ResultCode != SharpDX.DXGI.ResultCode.InvalidCall.Result.Code)
                 {
                     if (e.ResultCode.Code == SharpDX.DXGI.ResultCode.AccessLost.Result.Code)
                     {
@@ -187,6 +262,16 @@ namespace LEDControl
                         setupDX();
                         System.Threading.Thread.Sleep(200);
                     }
+                    else if (e.ResultCode.Code == SharpDX.DXGI.ResultCode.InvalidCall.Code)
+                    {
+                        invalid_calls++;
+                        if (invalid_calls >= 10)
+                        {
+                            Logger.QueueLine("Too many invalid calls, reinitializing duplication");
+                            setupDX();
+                        }
+                        System.Threading.Thread.Sleep(200);
+                    }
                     else
                         throw e;
                 }
@@ -197,8 +282,55 @@ namespace LEDControl
             }
             return null;
         }
+
+        private double rc = 1.0, gc = 1.0, bc = 1.0;
+
+        private void setColorTemp(int temp)
+        {
+            temp = temp / 100;
+
+            if (temp < 66) rc = 1;
+            else
+            {
+                double t = temp - 60;
+                t = 329.698727446 * Math.Pow(t, -0.1332047592);
+                rc = Math.Round(t) / 255;
+                if (rc < 0) rc = 0;
+                if (rc > 1) rc = 1;
+            }
+
+            if (temp <= 66)
+            {
+                double t = temp;
+                t = 99.4708025861 * Math.Log(t) - 161.1195681661;
+                gc = Math.Round(t) / 255;
+                if (gc < 0) gc = 0;
+                if (gc > 1) gc = 1;
+            }
+            else
+            {
+                double t = temp - 60;
+                t = 288.1221695283 * Math.Pow(t, -0.0755148492);
+                gc = Math.Round(t) / 255;
+                if (gc < 0) gc = 0;
+                if (gc > 1) gc = 1;
+            }
+
+            if (temp >= 66) bc = 1;
+            else if (temp <= 19) bc = 0;
+            else
+            {
+                double t = temp - 10;
+                t = 138.5177312231 * Math.Log(t) - 305.0447927307;
+                bc = Math.Round(t) / 255;
+                if (bc < 0) bc = 0;
+                if (bc > 1) bc = 1;
+            }
+        }
+
         public void draw()
         {
+            if (LEDSetup.OVERRIDE) return;
             if (device == null) return;
             byte[] serialData = LEDSetup.getMagicHeader();
 
@@ -211,6 +343,27 @@ namespace LEDControl
             {
                 int r = 0, g = 0, b = 0, c = 0;
                 long re = 0, gr = 0, bl = 0;
+#if true
+                var rect = new System.Drawing.Rectangle((int) LEDSetup.leds[i].Coords.X,
+                    (int) LEDSetup.leds[i].Coords.Y, (int) LEDSetup.leds[i].Coords.Width,
+                    (int) LEDSetup.leds[i].Coords.Height);
+                byte[] dat;
+                lock (screenBitmap)
+                {
+                    var bmpData = screenBitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+                    dat = new byte[bmpData.Stride * bmpData.Height];
+                    System.Runtime.InteropServices.Marshal.Copy(bmpData.Scan0, dat, 0, dat.Length);
+                    screenBitmap.UnlockBits(bmpData);
+                }
+                for (int d = 0; d < dat.Length; d += 4 * 60)
+                {
+                    // Format is actually Bgr despite the name above being Rgb
+                    bl += dat[d] * dat[d];
+                    gr += dat[d + 1] * dat[d + 1];
+                    re += dat[d + 2] * dat[d + 2];
+                    c++;
+                }
+#else
                 for (int x = (int)LEDSetup.leds[i].Coords.Left; x < (int)LEDSetup.leds[i].Coords.Right; x += 10)
                 {
                     for (int y = (int)LEDSetup.leds[i].Coords.Top; y < (int)LEDSetup.leds[i].Coords.Bottom; y += 10)
@@ -220,33 +373,17 @@ namespace LEDControl
                         {
                             col = screenBitmap.GetPixel(x, y);
                         }
-                        //if (false)
-                        //{
-                        //    re += (long)col.R;
-                        //    gr += (long)col.G;
-                        //    bl += (long)col.B;
-                        //}
-                        //else
-                        //{
-                            re += (long)(col.R * col.R);
-                            gr += (long)(col.G * col.G);
-                            bl += (long)(col.B * col.B);
-                        //}
+                        re += (long)(col.R * col.R);
+                        gr += (long)(col.G * col.G);
+                        bl += (long)(col.B * col.B);
                         c++;
                     }
                 }
-                //if (false)
-                //{
-                //    r = (int)(re / c);
-                //    g = (int)(gr / c);
-                //    b = (int)(bl / c);
-                //}
-                //else
-                //{
-                    r = (int)Math.Sqrt(re / c);
-                    g = (int)Math.Sqrt(gr / c);
-                    b = (int)Math.Sqrt(bl / c);
-                //}
+#endif
+
+                r = (int) (Math.Sqrt(re / c) * rc);
+                g = (int) (Math.Sqrt(gr / c) * gc);
+                b = (int) (Math.Sqrt(bl / c) * bc);
                 if (r > 255) r = 255;
                 if (g > 255) g = 255;
                 if (b > 255) b = 255;
@@ -301,7 +438,7 @@ namespace LEDControl
                 LEDSetup.processColor(i, serialData, r, g, b);
             });
 #endif
-            screenBitmap.Dispose();
+                screenBitmap.Dispose();
             LEDSetup.sendSerialData(serialData);
         }
     }

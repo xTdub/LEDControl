@@ -21,10 +21,10 @@ namespace LEDControl
             base.OnStartup(e);
         }
 
-        protected override async void OnExit(ExitEventArgs e)
+        protected override void OnExit(ExitEventArgs e)
         {
             Logger.QueueLine("Application is terminating");
-            await Logger.FlushQueueAsync();
+            //Task.WaitAll(Logger.FlushQueueAsync());
             base.OnExit(e);
         }
 
@@ -36,6 +36,7 @@ namespace LEDControl
                 e.Handled = true;
                 MessageBox.Show(e.Exception.Message, "Dispatcher Unhandled Exception", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+            //Task.WaitAll(Logger.FlushQueueAsync());
         }
         void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
@@ -45,6 +46,7 @@ namespace LEDControl
             {
                 MessageBox.Show(ex.Message, "Domain Unhandled Exception", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+            //Task.WaitAll(Logger.FlushQueueAsync());
         }
     }
 }

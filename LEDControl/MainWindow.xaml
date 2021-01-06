@@ -13,7 +13,7 @@
                         </Grid>
                     </Grid>
                     <TextBlock Text="LED Sample Size:" Width="90" Height="20" Margin="250,226,71,245"/>
-                    <xctk:IntegerUpDown x:Name="upDown" Value="120" Maximum="180" Minimum="40" Increment="2" Width="50" Height="20" Margin="345,226,16,245" ValueChanged="upDown_ValueChanged"/>
+                    <!--<xctk:IntegerUpDown x:Name="upDown" Value="120" Maximum="180" Minimum="40" Increment="2" Width="50" Height="20" Margin="345,226,16,245" ValueChanged="upDown_ValueChanged"/>-->
                     <Button Content="Draw" HorizontalAlignment="Left" Margin="10,226,0,245" Width="75" Click="Button_addLEDs"/>
                     <Button Content="Clear" HorizontalAlignment="Left" Margin="90,226,0,245" Width="75" Click="Button_removeLEDs"/>
                     <Button Content="Draw Color" HorizontalAlignment="Left" Margin="170,226,0,245" Width="75" Click="Button_addColorLEDs"/>
@@ -21,7 +21,13 @@
             </TabItem>
             <TabItem Header="Audio">
                 <Grid Background="#FFE5E5E5">
-                    
+                    <TextBlock Text="Audio Device:" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,6,0,0"/>
+                    <ComboBox x:Name="comboBoxAudioDevices" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="88,3,0,0" Width="313" SelectionChanged="comboBoxAudioDevices_SelectionChanged"/>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Test">
+                <Grid Background="#FFE5E5E5">
+                    <xctk:ColorCanvas x:Name="canvasColor" Margin="10,10,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" SelectedColorChanged="canvasColor_SelectedColorChanged" MouseEnter="canvasColor_MouseEnter" MouseLeave="canvasColor_MouseLeave" />
                 </Grid>
             </TabItem>
         </TabControl>
